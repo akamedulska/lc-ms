@@ -1,0 +1,302 @@
+METID,Name
+1,Disulfiram
+2,Meloxicam
+3,Benzophenone
+4,Fenbufen
+5,nicotinamide
+6,Sulfanilic acid
+7,Glucose
+8,Nifedipine
+9,Baclofen
+10,Sulfamerazine
+11,Veratridine
+12,Citric acid
+13,Salicylic acid
+14,Phenothiazine
+15,Indazole
+16,Phenazone
+17,Acridine
+18,Thiopental
+19,Carbamazepine
+20,Phenacetin
+21,Phenylalanine
+22,Xylometazoline
+23,Doxepin
+24,Atropine
+25,Verapamil
+26,Naphazoline
+27,Propafenone hydrochloride
+28,Naphthalene
+29,Propylparaben
+30,Naproxen
+31,Clozapine
+32,Imipramine hydrochloride
+33,Tolbutamide
+34,Olanzapine
+35,Nimesulide
+36,Clomipramine
+37,Warfarin
+38,Cimetidine
+39,Theophylline
+40,Nortriptyline
+41,Prazosin
+42,Chlorpheniramine
+43,Quinidine
+44,Benzoic acid
+45,Metoclopramide hydrochloride
+46,Chlorpromazine
+47,Chlorprothixene
+48,Phenylbutazone
+49,Amitriptyline
+50,Diltiazem hydrochloride
+51,Diphenhydramine
+52,Papaverine
+53,Aminophenazone
+54,Clonidine
+55,Sulfaguanidine
+56,Sulfathiazole
+57,Carvedilol
+58,Pioglitazone
+59,Furosemide
+60,Caffeine
+61,Ibuprofen
+62,Chloropropamide
+63,Telmisartan
+64,Famotidine
+65,Promethazine
+66,Salicylamide
+67,Indoramin
+68,Nabumetone
+69,Perphenazine
+70,Esmolol
+71,Reserpine
+72,Dilevalol
+73,Physostigmine
+74,Betaxolol
+75,Yohimbine
+76,Pindolol
+77,Candesartan
+78,Ramipril
+79,Clopidogrel
+80,Hydrochlorothiazide
+81,Sulfacetamide
+82,Lovastatin
+83,Torasemide
+84,Melatonin
+85,Benzylpenicillin potassium
+86,Enalapril maleate
+87,Bretylium tosylate ujemna
+88,Ranitidine hydrochloride
+89,Doxazosin dobesilate
+90,Diclofenac potassium
+91,Disopyramide phosphate
+92,Paracetamol
+93,N-(3-acetyl-4-hydroxyphenyl)butanamide
+94,Nicotinic acid
+95,Thiamine
+96,8-Bromoguanosine
+97,5-Phenylvaleric acid
+98,Asparagine
+99,Threonine
+100,Tolazoline hydrochloride
+101,Phenyl salicylate
+102,1-Methyladenosine
+103,Cysteine
+104,Cytidine
+105,3-Hydroxybenzoic acid
+106,Alendronate sodium
+107,Ciprofloxacin hydrochloride
+108,Indapamide
+109,Erythromycin
+110,Niflumic acid
+111,Probenecid
+112,Sulfinpyrazone
+113,Cinnarizine
+114,Loratadine
+115,Procaine
+116,Haloperidol
+117,Promazine
+118,Thioridazine
+119,Lidocaine hydrochloride
+120,Opipramol dihydrochloride
+121,Selegiline hydrochloride
+122,Fluvastatin sodium
+123,Bromhexine hydrochloride
+124,Chloropyramine hydrochloride
+125,Alprenolol hydrochloride
+126,Lisinopril dihydrate
+127,Hydroxyzine dihydrochloride
+128,Pyrilamine maleate
+129,Antazoline phosphate
+130,Chloroquine diphosphate
+131,Amlodipine besylate
+132,Amiodarone hydrochloride
+133,Acebutolol hydrochloride
+134,Labetalol hydrochloride
+135,AGN192403 hydrochloride
+136,BU 226 hydrochloride
+137,Metrazoline
+138,Agmatine sulfate
+139,Dexmedetomidine hydrochloride
+140,Hydrocortisone
+141,Tryptophan
+142,Metoprolol tartrate
+143,Valsartan
+144,Clarithromycin
+145,Acetylsalicylic acid
+146,Ketoprofen
+147,Chloramphenicol
+148,Clotrimazole
+149,Indomethacin
+150,Propyphenazone
+151,Gliclazide
+152,D-Penicillamine
+153,Flunarizine dihydrochloride
+154,Gemfibrozil
+155,Mexiletine hydrochloride
+156,Propranolol hydrochloride
+157,Detomidine hydrochloride monohydrate
+158,Nalidixic acid
+159,Bupropion hydrochloride
+160,Benzydamine hydrochloride
+161,Omeprazole
+162,Levodopa
+163,Bifonazole
+164,Trimethoprim
+165,Propantheline bromide
+166,Ethylparaben
+167,Nitrendipine
+168,Naloxone hydrochloride
+169,Etofylline
+170,Terfenadine
+171,Bisoprolol
+172,Thiamphenicol
+173,Chlorthalidone
+174,Ampicillin
+175,Amoxicillin trihydrate
+176,Nizatidine
+177,1p3-Diphenyl-2-propenone
+178,2-Naphthoic acid
+179,2-Fluorobenzoic acid
+180,Quinine
+181,4-Hexylbenzoic acid
+182,Sulfinpyrazone2
+183,Doxycycline hyclate
+184,Butylparaben
+185,Captopril
+186,Thiabendazole
+187,Terazosin hydrochloride dihydrate
+188,1-Benzylimidazole
+189,Enalaprilat
+190,Tilmicosin
+191,Nadolol
+192,2-Nitrobenzoic acid
+193,3-Nitrobenzoic acid
+194,4-Pentylbenzoic acid
+195,Methylmetsulfuron
+196,Flumequine
+197,Ethirimol
+198,Terbutaline acetate salt hemihydrate
+199,Fluconazole
+200,Fomesafen
+201,Sotalol hydrochloride
+202,Chlorsulfuron
+203,Nitrofurazone
+204,Imidacloprid
+205,Sulfisoxazole
+206,Sulfamethazine
+207,Prednisolone
+208,Mefenamic acid
+209,Mefluidide
+210,Pyrimethamine
+211,Rifampin
+212,Xipamide
+213,Azithromycin dihydrate
+214,Pyruvic acid sodium salt
+215,Glutamic acid
+216,Creatinine
+217,Hippuric acid
+218,alpha-Hydroxyhippuric acid
+219,3p7-Dimethyluric acid
+220,trans-Aconitic acid
+221,D-Sorbitol
+222,Glutaric acid
+223,Indole-3-lactic acid
+224,L-Serine
+225,L-Valine
+226,D-Glucuronic acid
+227,Purine
+228,Fumaric acid
+229,L-Citrulline
+230,N-(2-Furoyl)glycine
+231,1p7-Dimethylxanthine
+232,Methyl alpha-D-mannopyranoside
+233,1-Methyl-L-histidine
+234,D-Gluconic acid delta-lactone
+235,Suberic acid
+236,Pimelic acid
+237,Kynurenic acid
+238,Hydrocinnamic acid
+239,Sucrose
+240,myo-Inositol
+241,L-Phenylalanine
+242,L-Pyroglutamic acid
+243,Xylitol
+244,L-Proline
+245,D-Pantothenic acid hemicalcium salt
+246,N6-Methyl-2prim-deoxyadenosine
+247,Fusidic acid
+248,Acetazolamide
+249,Lysine hydrochloride
+250,Mannitol
+251,Clindamycin phosphate
+252,Acesulfame potassium
+253,Chlormidazole hydrochloride
+254,Trimetazidine dihydrochloride
+255,Pentoxifylline
+256,Terbinafine hydrochloride
+257,Roxithromycin
+258,Histidine monohydrochloride monohydrate
+259,Sildenafil citrate
+260,RX 821002 hydrochlorie
+261,2-BFI hydrochloride
+262,Flupirtine maleate
+263,BU 224 hydrochloride
+264,PNU 37883 hydrochloride
+265,ARC 239 dihydrochloride
+266,Aspartic acid
+267,3-methyluridine
+268,7-methylguanosine
+269,alpha-ketoglutaric acid
+270,levofloxacin hemihydrate
+271,N-alpha-acetyl-L-glutamine
+272,3-methoxy-4-hydroxymandelic acid
+273,N(G)pN(G)-dimethylarginine dihydrochloride
+274,O-acetyl-L-carnitine hydrochloride
+275,aprepitant
+276,ezetimibe
+277,tylosin tartrate
+278,dirithromycin
+279,troleandomycin
+280,rifamycin SV sodium salt
+281,spiramycin
+282,Prochlorperazine
+283,Rutoside
+284,Sulfafurazole
+285,Tolazoline hydrochloride2
+286,Acenocoumarol
+287,Fluocinolone acetonide
+288,Irbesartan
+289,Chlorzoxazone
+290,Perindopril
+291,Metamizole sodium
+292,saccharosum
+293,rivanolum
+294,resorcinolum
+295,pantoprasole sodium
+296,carnosine
+297,ornitine monohydrochloride
+298,arginine
+299,metionine
+300,Enrofloxacin
+301,Bretylium tosylate dodatnia

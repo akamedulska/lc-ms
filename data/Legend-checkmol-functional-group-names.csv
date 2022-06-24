@@ -1,0 +1,205 @@
+No,functional group name
+1,cation
+2,anion
+3,carbonyl compound
+4,aldehyde
+5,ketone
+6,thiocarbonyl compound
+7,thioaldehyde
+8,thioketone
+9,imine
+10,hydrazone
+11,semicarbazone
+12,thiosemicarbazone
+13,oxime
+14,oxime ether
+15,ketene
+16,ketene acetal derivative
+17,carbonyl hydrate
+18,hemiacetal
+19,acetal
+20,hemiaminal
+21,aminal
+22,thiohemiaminal
+23,thioacetal
+24,enamine
+25,enol
+26,enolether
+27,hydroxy
+28,alcohol
+29,prim. alcohol
+30,sec. alcohol
+31,tert. alcohol
+32,"1,2-diol"
+33,"1,2-aminoalcohol"
+34,phenol
+35,"1,2-diphenol"
+36,enediol
+37,ether
+38,dialkylether
+39,alkylarylether
+40,diarylether
+41,thioether
+42,disulfide
+43,peroxide
+44,hydroperoxide
+45,hydrazine
+46,hydroxylamine
+47,amine
+48,prim. amine
+49,prim. aliphat. mine
+50,prim. aromat. mine
+51,sec. amine
+52,sec. aliphat. amine
+53,sec. mixed amine (aryl alkyl)
+54,sec. aromat. amine
+55,tert. amine
+56,tert. aliphat. amine
+57,tert. mixed amine
+58,tert. arom_amine
+59,quaternary ammonium salt
+60,N-oxide
+61,halogen deriv.
+62,alkyl halide
+63,alkyl fluoride
+64,alkyl chloride
+65,alkyl bromide
+66,alkyl iodide
+67,aryl halide
+68,aryl fluoride
+69,aryl chloride
+70,aryl bromide
+71,aryl iodide
+72,organometallic compound
+73,organolithium compound
+74,organomagnesium compound
+75,carboxylic acid deriv.
+76,carboxylic acid
+77,carboxylic acid salt
+78,carboxylic acid ester
+79,lactone
+80,carboxylic acid amide
+81,carboxylic acid prim. amide
+82,carboxylic acid sec. amide
+83,carboxylic acid tert. amide
+84,lactam
+85,carboxylic acid hydrazide
+86,carboxylic acid azide
+87,hydroxamic acid
+88,carboxylic acid amidine
+89,carboxylic acid amidrazone
+90,nitrile
+91,acyl halide
+92,acyl fluoride
+93,acyl chloride
+94,acyl bromide
+95,acyl iodide
+96,acyl cyanide
+97,imido ester
+98,imidoyl halide
+99,thiocarboxylic acid deriv.
+100,thiocarboxylic acid
+101,thiocarboxylic acid ester
+102,thiolactone
+103,thiocarboxylic acid amide
+104,thiolactam
+105,imido_thioester
+106,oxohetarene
+107,thioxohetarene
+108,iminohetarene
+109,orthocarboxylic acid deriv.
+110,carboxylic acid orthoester
+111,carboxylic acid amide acetal
+112,carboxylic acid anhydride
+113,carboxylic acid imide
+114,carboxylic acid unsubst. imide 
+115,carboxylic acid subst. Imide
+116,CO2 deriv.
+117,carbonic acid deriv.
+118,carbonic acid monoester
+119,carbonic acid diester
+120,carbonic acid ester halide
+121,thiocarbonic acid deriv.
+122,thiocarbonic acid monoester
+123,thiocarbonic acid diester
+124,thiocarbonic acid ester halide
+125,carbamic acid deriv
+126,carbamic acid
+127,carbamic acid ester (urethane
+128,carbamic acid halide
+129,thiocarbamic acid deriv.
+130,thiocarbamic acid
+131,thiocarbamic acid ester
+132,thiocarbamic acid halide
+133,urea
+134,isourea
+135,thiourea
+136,isothiourea
+137,guanidine
+138,semicarbazide
+139,thiosemicarbazide
+140,azide
+141,azo compound
+142,diazonium salt
+143,isonitrile
+144,cyanate
+145,isocyanate
+146,thiocyanate
+147,isothiocyanate
+148,carbodiimide
+149,nitroso compound
+150,nitro compound
+151,nitrite
+152,nitrate
+153,sulfuric acid deriv.
+154,sulfuric acid
+155,sulfuric acid monoester
+156,sulfuric acid diester
+157,sulfuric acid amide ester
+158,sulfuric acid amide
+159,sulfuric acid diamide
+160,sulfuryl halide
+161,sulfonic acid deriv.
+162,sulfonic acid
+163,sulfonic acid ester
+164,sulfonamide
+165,sulfonyl halide
+166,sulfone
+167,sulfoxide
+168,sulfinic acid deriv.
+169,sulfinic acid
+170,sulfinic acid ester
+171,sulfinic acid halide
+172,sulfinic acid amide
+173,sulfenic acid deriv.
+174,sulfenic acid
+175,sulfenic acid ester
+176,sulfenic acid halide
+177,sulfenic acid amide
+178,thiol
+179,alkylthiol
+180,arylthiol
+181,phosphoric acid deriv.
+182,phosphoric acid
+183,phosphoric acid ester
+184,phosphoric acid halide
+185,phosphoric acid amide
+186,thiophosphoric acid deriv.
+187,thiophosphoric acid
+188,thiophosphoric acid ester
+189,thiophosphoric acid halide
+190,thiophosphoric acid amide
+191,phosphonic acid deriv.
+192,phosphonic acid
+193,phosphonic acid ester
+194,phosphine
+195,phosphinoxide
+196,boronic acid deriv.
+197,boronic acid
+198,boronic acid ester
+199,alkene
+200,alkyne
+201,aromatic compound
+202,heterocyclic compound
+203,alpha-aminoacid
+204,alpha-hydroxyacid
