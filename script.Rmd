@@ -1,0 +1,1026 @@
+---
+title: "Toward the general generative model of liquid chromatographic retention"
+author: "Agnieszka Kamedulska, Łukasz Kubik, Julia Jacyna, Wiktoria Struck-Lewicka, Michał J. Markuszewski, Paweł Wiczling"
+adress: "Department of Biopharmaceutics and Pharmacodynamics, Medical University of Gdańsk, Gen. J. Hallera 107, 80-416 Gdańsk, Poland"
+date: "`r format(Sys.Date())`"
+output:
+  bookdown::html_document2:
+    toc: true
+    theme: flatly
+    toc_float: true
+bibliography: "references/references.bib"    
+csl: "references/analytical-chemistry.csl"
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE,warning = FALSE, message = FALSE)
+```
+
+# Setup
+
+**Load packages:**
+
+```{r message=FALSE}
+library(pracma)
+library(dplyr)
+library(ggplot2)
+require(gridExtra)
+library(GGally)
+library(cmdstanr)
+library(rstan)
+library(knitr)
+library(reshape2)
+library(bayesplot)
+library(posterior)
+
+set.seed(10271998) ## not required but assures repeatable results
+```
+
+# Introduction
+
+Large datasets of chromatographic retention times measurements are relatively easy to collect. It is particularly true when mixtures of compounds are analyzed under a series of gradient conditions using chromatographic techniques coupled with mass spectrometry detection. Such datasets carry a lot of information about chromatographic retention that, if extracted, can provide useful predictive information. In this work, we proposed a generative model that jointly explains the relationship between pH, organic modifier type, temperature, organic modifier content, and analyte retention based on liquid chromatography retention data of 187 small molecules. 
+
+# Data 
+
+The data was collected using a mixture of 300 analytes and 84 gradient liquid chromatography experiments. The experiments differed in gradient duration (30, 90, and 270 min) and pH of the mobile phase (from 2.5 to 10.5). Experiments were conducted in MeOH or ACN as organic modifiers and at two temperatures ($25^0C$ and $35^0C$). 
+
+The molecular structure of the analytes was converted from SMILE format to MDL mol format using OpenBabel.19The in-put molecules were then analyzed for the presence of approxi-mately 204 functional groups and structural elements using Checkmol (version 0.5b N. Haider, University of Vienna, 2003-2018). Functional groups that were not present on any analyte and functional groups merging other simpler functional groups were excluded from the analysis. The lipophilicity (log P), dissociation constant (pKalit) and pKaerror ($\epsilon$) were added to the dataset. They were calculated using ACD/Labs program based on the structures of analytes generated from smiles strings.
+
+## Load data
+
+```{r}
+data = read.csv('data/1-X_Bridge_Shield_C18_5cm.csv')
+data$Mod  = as.character(data$Mod)
+data$Mod2 = ifelse(data$Mod=="MeOH",1,2)                        # MeOH = 1, ACN = 2
+dataNames = read.csv('data/4-compounds-names.csv')
+dataACD = read.csv('data/2-ACD-pKas-logP.csv')
+functional_groups = read.csv('data/6-checkmol-functional-groups.csv')
+functional_groups_names = read.csv('data/Legend-checkmol-functional-group-names.csv')
+```
+
+Covariets: 
+
+```{r}
+pKaslit = dataACD[,3:7]           # pKa values as predicted by ACD
+pKasliterror = dataACD[,25:29]    # pKa error as predicted by ACD
+chargesA = abs(dataACD[,13:18])   # number of ionized groups (anions)
+chargesB = abs(dataACD[,19:24])   # number of ionized groups (cations)
+charges = chargesA+chargesB                         # absolute charge
+groupsA = (chargesA[,2:5] - chargesA[,1:4])         # acidic group
+groupsB = -(chargesB[,2:5] - chargesB[,1:4])        # basic group
+R = rowSums(pKaslit<14)                             # number of dissociation steps
+logP = dataACD$logP 
+
+
+functional_groups=functional_groups[,2:ncol(functional_groups)]
+
+# combine nr of caroboxylic acid and carboxyalic acid salt functional groups
+functional_groups[,76]=functional_groups[,76]+functional_groups[,77]       
+functional_groups[which(functional_groups[,202]>5.5),202] = 6; # heterocyclic compounds with more than 6 heterocycles are treated as if they have six
+
+########
+idx_included <- c(4,5,9,11,14,18,19,20,21,24,26,29,30,31,32,33,34,38,39,40,41,45,49,50,52,53,54,56,57,59,63,64,68,69,70,71,76,78,79,81,82,83,84,85,88,90,106,108,113,114,115,127,131,133,137,138,150,164,166,167)
+functional_groups_names <- functional_groups_names[idx_included,]
+functional_groups <- functional_groups[,idx_included]
+########
+```
+
+## Prepare data
+
+From dataset were removed measurments with low score.
+
+```{r}
+data <- data[-which(data$Score<95),]
+```
+
+Analytes that have less than 42 measurements collected also were removed.
+
+```{r}
+ID_freq <- as.data.frame(table(data$METID))
+ID <- ID_freq[which(ID_freq$Freq>42),1]
+data <- data[which(data$METID %in% ID),]
+rm(ID_freq,ID)
+```
+
+To dataset were selected measurments with the highest score (if several). 
+
+```{r}
+data$METEXPID = data$METID*100+data$EXPID
+data <- data %>% 
+  group_by(METEXPID) %>%
+  slice(which.max(Score))
+```
+
+Dilevalol is repeated in the dataset, so it has been removed.
+
+```{r}
+data <- data[-which(data$METID==72),]
+```
+
+To analysis were selected analytes with max two dissociation steps.
+
+```{r}
+data = data[which(data$METID %in% which(R<=2)),]
+```
+
+Preparation data about covariates:
+
+```{r}
+maxR =2                                                                # max two dissociation steps        
+pKaslit = pKaslit[which(dataACD$METID %in% data$METID),1:maxR]              # pKa values as predicted by ACD
+pKasliterror = pKasliterror[which(dataACD$METID %in% data$METID),1:maxR]    # pKa error as predicted by ACD
+chargesA = chargesA[which(dataACD$METID %in% data$METID),1:(maxR+1)]   # number of ionized groups (anions)
+chargesB = chargesB[which(dataACD$METID %in% data$METID),1:(maxR+1)]   # number of ionized groups (cations)
+charges = charges[which(dataACD$METID %in% data$METID),1:(maxR+1)]     # absolute charge
+groupsA = groupsA[which(dataACD$METID %in% data$METID),1:maxR]         # acidic group
+groupsB = groupsB[which(dataACD$METID %in% data$METID),1:maxR]         # basic group
+R = R[which(dataACD$METID %in% data$METID)]                             # number of dissociation steps
+logP = logP[which(dataACD$METID %in% data$METID)]                       # logP
+nrfungroups=functional_groups[which(dataACD$METID %in% data$METID),]
+K <- ncol(nrfungroups)
+```
+
+##  Plot data 
+
+Ploting retention time depending on pH for a few selected analytes:
+
+```{r}
+analyte_ID_sample <- c(8,9,17,33,58,180)
+
+temp.labs <- c("25\u00b0C","35\u00b0C")
+names(temp.labs) <- c('25','35')
+
+mod.labs <- c("ACN","MeOH")
+names(mod.labs) <- c('2','1')
+
+for(i in 1:length(analyte_ID_sample)){
+p <- ggplot(data[which(data$METID %in% analyte_ID_sample[i]),])+
+      geom_point(aes(x = pHs, y = RT, color = as.factor(tg)))+ 
+      facet_grid(Temp~Mod2, labeller = labeller(Temp=temp.labs,Mod2=mod.labs))+
+      labs(title=paste(dataNames$Name[analyte_ID_sample[i]]), x ="pH", y = "Retention time", color = "Gradient time")
+print(p)
+}
+```
+
+Ploting all raw data:
+
+```{r}
+ggplot(data, aes(x = pHs, y = RT, color = as.factor(tg), group=interaction(METID, tg)))+
+  geom_point(size=1,alpha=0.5)+ geom_line(size=.5,alpha=0.3)+
+  facet_grid(Temp~Mod, labeller = labeller(Temp=temp.labs))+
+  labs(title="", x ="pH", y = "Retention time", color = "Gradient time")
+```
+
+# Methods
+
+## Model
+
+Retention time $t_{R,z}$ under organic modifier gradient was calculated utilizing the well-known integral equation:
+
+\begin{equation} 
+\int_0^{t_{R,z}-t_0-t_e}\frac{dt}{t_0\cdot ki_{i[z],m[z],b[z],T[z],j[z]} (t) }=1,
+(\#eq:int)
+\end{equation}
+
+where $ki_{i[z],m[z],b[z],T[z],j[z]} (t)$ denotes instantaneous isocratic retention factor corresponding to the mobile phase composition at time t at column inlet for a particular measurement $z$, $t_0$ denotes column hold-up (dead) time and $t_e$ denotes extra column-time. On the other hand, the subscripts correspond, respectively: r - dissociation step, i - analyte, m - organic modifier (1 for MeOH, 2 for ACN), j - organic modifier content, b - pH (b=1..9, corresponding to nominal pH of 2.5, 3.3, 4.1, 4.9, 5.8, 6.8, 8.9, 9.7, 10.5, respectively), T - temperature (1-$25^0C$ and 2-$35^0C$).
+
+The following function described the relationship between the isocratic retention factor and pH for an analyte with R dissociation steps and R+1 forms:
+
+\begin{equation} 
+ki_{i,m,b,T,j}=\frac{k_{1,i,m,b,T,j}+\sum_{r=1}^R k_{r+1,i,m,b,T,j} \cdot 10^{r\cdot pH_{m,b,T,j}-\sum_{r=1}^R pKa_{r,i,m,j} } }{1+\sum_{r=1}^R 10^{r\cdot pH_{m,b,T,j}-\sum_{r=1}^R pKa_{r,i,m,j} } }.
+\end{equation}
+
+Further, it was assumed that $k_{r,i,m,b,T,j}$ depends on the organic modifier content, pH and temperature:
+
+\begin{align} 
+logk_{r,m,i,b,T,j}&=logkw_{r,i}-\frac{S1_{r,i,m}\cdot (1+S2_m )\cdot \varphi_j}{1+S2_m \cdot \varphi_j }+dlogkT_i\cdot (T_t-25)/10+   \\  &+ |chargeA_{r,i} | \cdot apHA \cdot (pH_{m,b,T,j}-7)+ \\  &+ |chargeB_{r,i} | \cdot apHB \cdot (pH_{m,b,T,j}-7),
+\end{align} 
+
+where $logkw_{r,i}$ represents logarithm of retention factors extrapolated to $0\%$ of organic modifier content for the neutral and ionized forms of analytes; $S1_{r,i,m}$ and $S2_m$ are the slopes in the Neue equation; $dlogkT_i$ denotes the change in logkw due to the increase in temperature by $10^0C$.In this parametrization of Neue equation, S1 parameter reflects the difference betweenlogarithm of retention factors corresponding to water ($0\%$ of organic modifier content) and MeOH or ACN ($100\%$ of organic modifier content) as eluents, apH denotes the pH effects (common for all analytes); $chargeA_{r,i}$ and $chargeB_{r,i}$ denote a charge state of an analyte ($chargeA_{r,i}=\{0, -1, -2, \ldots\}$ for acids, and $chargeB_{r,i}=\{0, -1, -2, \ldots\}$ for bases), and $|.|$ denotes absolute value. 
+
+The relationship between pH and the content of organic modifier for various combinations of organic modifier and buffer was experimentally determined prior to the chromatographic analysis. In this settings pH and consequently pKa values correspond to ${_w^s}pH$ or ${_w^s}pKa$ scale. The obtained relationships was then described using quadratic equations for each nominal pH, temperature and organic modifier (36 equations in total):
+
+\begin{equation} 
+pH_{m,b,T,j}=pHo_{m,b,T}+\alpha 1_{m,b,T}\cdot \varphi_j+\alpha 2_{m,b,T}\cdot {\varphi_j}^2,
+\end{equation} 
+
+where $pHo_{m,b,T}$,$\alpha 1_{m,b,T}$ and $\alpha 2_{m,b,T}$ are regression coefficient specific for a given condition.
+
+Further a linear relationship between pKa values and the organic modifier content was assumed:
+\begin{equation} 
+pKa_{r,i,m,j}=pKaw_{r,i}+\alpha_{r,i,m}\cdot\varphi_j		
+\end{equation} 
+
+where $pKa_{r,i,m,j}$ denotes dissociationconstant of an analyte in given chromatographic conditions, $pKaw_{r,i}$ denotes aqueous pKa, and $\alpha_{r,i,m}\cdot\varphi_j$ denotes the slope due to changes in organic modifier.The linear relationshipis generally valid for $\varphi_j<0.8$.
+
+### The analyte-level model
+
+The $logkw_{r,i}$, $S1_{r,i,m}$ parameters were calculated based on retention parameters of the neutral form of an analyte, and the difference in logkw and S1 values between the neutral and ionized form of an analyte.
+
+\begin{align}
+&logkw_{r,i}=logkwN_i+|chargeA_{r,i} |\cdot dlogkwA_{r,i}+ |chargeB_{r,i} |\cdot dlogkwB_{r,i}	\\
+&S1_{r,i,m=1}=S1mN_i+|chargeA_{r,i} |\cdot dS1mA_{r,i}+ |chargeB_{r,i} |\cdot dS1mB_{r,i}	\\
+&S1_{r,i,m=2}=S1aN_i+|chargeA_{r,i} |\cdot dS1aA_{r,i}+ |chargeB_{r,i} |\cdot dS1aB_{r,i}
+\end{align}
+
+Similarly the αparameters were assumed to be different for acids and bases:
+
+\begin{align}
+&\alpha_{r,i,m=1}=\alpha mA_{r,i}\cdot groupA_{r,i}+\alpha mB_{r,i} \cdot groupB_{r,i}\\
+&\alpha_{r,i,m=2}=\alpha aA_{r,i}\cdot groupA_{r,i}+\alpha aB_{r,i} \cdot groupB_{r,i}	
+\end{align}
+
+where $groupA_{r,i}$ and $groupB_{r,i}$ denote the type of dissociating group ($groupA_{r,i}=1$ if acidic and 0 otherwise, $groupB_{r,i}=1$ if basic and 0 otherwise).
+
+The second-level part of the model describes the relationship between analyte-specific parameters and predictors. The pa-rameters for the neutral form of an analyte were assumed to be correlated and related to log P and functional groups:
+
+\begin{align}
+\begin{bmatrix}
+logkwN_i\\
+S1mN_i\\
+S1aN_i
+\end{bmatrix} \sim
+MNV \begin{pmatrix}
+\theta_{\log kwN}+\beta_{\log kwN}\cdot (\log P_i -2.2)+\pi_{\log kwN}\cdot X & \\
+\theta_{S1mN}+\beta_{S1mN}\cdot (\log P_i -2.2)+\pi_{S1mN}\cdot X & \Omega \\
+\theta_{S1aN}+\beta_{S1aN}\cdot (\log P_i -2.2)+\pi_{S1aN}\cdot X & 
+\end{pmatrix}
+\end{align}
+
+where *MVN* denotes the multivariate normal distribution; $\theta_{\log kwN}$, $\theta_{S1mN}$ and $\theta_{S1aN}$ are the mean values of individual chromatographic parameters that correspond to a typical analyte with logP=2.2, with no functional groups at $25^0C$; $\beta_{\log kwN}$, $\beta_{S1mN}$ and $\beta_{S1aN}$ are regression coefficients between the individual chromatographic parameters and the $\log P_i$ values; $\pi_i$ is an effect of each functional group on chromatographic parameters with separate values for $\log kwN$, $S1mN$ and $S1aN$. $\pi$ represents the difference in chromatographic parameters due to the presence of a functional group, assuming all else being equal. $X$ is a matrix of size 187 x 60 that decodes the number of functional groups present on each analyte. 
+
+##  Format data for Stan
+
+### Initialize variables and parameters 
+
+The numerical solution of this integral equation \@ref(eq:int) was carried out using method of steps with 4 and 10 steps for methanol and acetonitrile gradients using method proposed by Nikitas et al. @Nikitas2002
+
+```{r}
+nObs = length(data$METID)
+nAnalytes = length(unique(data$METID))
+npH = length(unique(data$pH))
+analyte=match(data$METID, unique(data$METID))
+pHid=match(data$pH, unique(data$pH))
+steps=4*(1-data$Mod2) + 10*(data$Mod2)
+hplcparam=cbind(data$tg,data$td,data$to,data$te,data$fio,data$fik,data$Mod2+1,
+                data$pHo,data$alpha1,data$alpha2,(data$Temp-25)/10)
+mod=data$Mod2
+logPobs=logP
+trobs=data$RT
+```
+
+The next step is to create Stan data set:
+
+```{r}
+datastruct = with(data,
+                  list(nAnalytes=nAnalytes,
+                       nObs=nObs,
+                       npH=npH,
+                       analyte=match(data$METID, unique(data$METID)),
+                       pHid=match(data$pH, unique(data$pH)),
+                       steps=4*(1-data$Mod2) + 10*(data$Mod2),
+                       hplcparam=cbind(data$tg,data$td,data$to,data$te,data$fio,data$fik,data$Mod2+1,data$pHo,
+                                       data$alpha1,data$alpha2,(data$Temp-25)/10),
+                       mod=data$Mod2,
+                       logPobs=logP, 
+                       maxR=maxR,
+                       R=R,
+                       pKaslit=pKaslit,
+                       pKasliterror=pKasliterror,
+                       groupsA=groupsA, 
+                       groupsB=groupsB, 
+                       chargesA=chargesA,
+                       chargesB=chargesB,
+                       trobs=data$RT,
+                       K=K,
+                       nrfungroups=nrfungroups))
+
+
+
+stan_rdump(c("nAnalytes", 
+             "nObs", 
+             "npH", 
+             "analyte", 
+             "pHid", 
+             "steps", 
+             "hplcparam",  
+             "mod",
+             "logPobs", 
+             "maxR", 
+             "R", 
+             "pKaslit",  
+             "pKasliterror",
+             "groupsA",
+             "groupsB",
+             "chargesA", 
+             "chargesB",
+             "K",
+             "nrfungroups"),
+           file="stan/model.data.R")
+```
+
+and initialize the values for each variable in each chain:
+
+```{r}
+init <- function(){
+  list(   logkwHat  =  rnorm(1,2.2,2),
+          S1mHat     = rnorm(1,4,1),
+          S1aHat     = rnorm(1,5,1),
+          dlogkwHat = rnorm(2,-1,0.125),
+          dSmHat   = rnorm(2,0,0.5),
+          dSaHat   = rnorm(2,0,0.5),
+          S2mHat    = rlnorm(1,log(0.2),0.05), 
+          S2aHat    = rlnorm(1,log(2),0.05),
+          beta  = rnorm(3,c(0.75,0.5,0.5),0.125),
+          alphaAHat = rnorm(2,2,0.2),
+          alphaBHat = rnorm(2,-1,0.2),
+          dlogkTHat  = rnorm(1,-0.087,0.0022),
+          omegadlogkT  = rlnorm(1,log(0.022),0.2),
+          apH  = rnorm(2,c(-0.0238,0.0851),c(0.0010, 0.0009)),
+          sigma   = rlnorm(nAnalytes,log(0.2),0.2),
+          msigma  = rlnorm(1,log(0.2),0.2),
+          ssigma  = rlnorm(1,log(0.5),0.2),
+          omega = c(1,1,1)*exp(rnorm(3,0, 0.5)),
+          rho1 = matrix(c(1, 0.75, 0.75, 
+                          0.75, 1, 0.75, 
+                          0.75,  0.75, 1),3,3,byrow=TRUE),
+          L2 = matrix(c(1, 0,0.75, 0.6614),2,2,byrow=TRUE),
+          kappa = c(0.25,0.25,0.25)* exp(rnorm(3,0, 0.2)),
+          tau   = c(0.5,0.5)*exp(rnorm(2,0, 0.2)),
+          pilogkw = rep(0,K),
+          piS1m = rep(0,K),
+          piS1a = rep(0,K),
+          sdpi = c(0.1,0.1,0.1)* exp(rnorm(3,0,0.1)),
+          param =  c(2+logP, 4*matrix(1,nAnalytes,1)+0.5*logP,
+                     5*matrix(1,nAnalytes,1)+0.5*logP), 
+          dlogkwA =  -1*matrix(1,nAnalytes,maxR+1), 
+          dlogkwB = -1*matrix(1,nAnalytes,maxR+1), 
+          dSmA = matrix(0,nAnalytes,maxR+1), 
+          dSmB = matrix(0,nAnalytes,maxR+1),
+          dSaA = matrix(0,nAnalytes,maxR+1),
+          dSaB = matrix(0,nAnalytes,maxR+1), 
+          dlogkT = rnorm(nAnalytes,-0.0868,0.0217),
+          pKaw = pKaslit,
+          etaStd1 = matrix(0,2,nAnalytes),
+          etaStd2 = matrix(0,2,nAnalytes)
+  )
+}
+```
+
+## Fitting the model
+
+```{r eval = FALSE}
+mod1 <- cmdstan_model("hplc-gra-redsum.stan")
+
+fit <- mod1$sample(
+  data = datastruct,
+  output_dir = "Tmpstan1",
+  init = init,
+  iter_warmup = 1000,
+  iter_sampling = 1000,
+  chains = 4,
+  parallel_chains = 4,
+  refresh = 500,
+  adapt_delta=0.9
+)
+```
+
+```{r eval = FALSE}
+mod_prior <- cmdstan_model("hplc-gra-redsum-priors.stan")
+
+fit_prior <- mod_prior$sample(
+  data = datastruct,
+  output_dir = "Tmpstan2",
+  init = init,
+  iter_warmup = 1000,
+  iter_sampling = 1000,
+  chains = 4,
+  parallel_chains = 4,
+  refresh = 500,
+  adapt_delta=0.9
+)
+```
+
+Loading saved files:
+
+```{r}
+fit <- cmdstanr::as_cmdstan_fit(c('C:/Users/agnie/Desktop/HPLC_2022/X_Bridge_Shield_C18/csv_files/csv/Feq4Okp2JaerpsFyxOxYk2-output-1.csv',
+                                  'C:/Users/agnie/Desktop/HPLC_2022/X_Bridge_Shield_C18/csv_files/csv/Feq4Okp2JaerpsFyxOxYk2-output-2.csv',
+                                  'C:/Users/agnie/Desktop/HPLC_2022/X_Bridge_Shield_C18/csv_files/csv/Feq4Okp2JaerpsFyxOxYk2-output-3.csv',
+                                  'C:/Users/agnie/Desktop/HPLC_2022/X_Bridge_Shield_C18/csv_files/csv/Feq4Okp2JaerpsFyxOxYk2-output-4.csv'))
+
+```
+
+# Results
+
+## Priors
+
+```{r include=TRUE,  eval = FALSE}
+bayesplot::mcmc_areas(fit_prior$draws(c("logkwHat","S1mHat","S1aHat"))) 
+bayesplot::mcmc_areas(fit_prior$draws(c("dlogkwHat","dSmHat","dSaHat"))) 
+bayesplot::mcmc_areas(fit_prior$draws(c("S2mHat","S2aHat")))
+bayesplot::mcmc_areas(fit_prior$draws(c("beta")))
+bayesplot::mcmc_areas(fit_prior$draws(c("alphaAHat","alphaBHat"))
+bayesplot::mcmc_areas(fit_prior$draws(c("dlogkTHat","omegadlogkT")))
+bayesplot::mcmc_areas(fit_prior$draws(c("apH"))) 
+bayesplot::mcmc_areas(fit_prior$draws(c("msigma","ssigma"))) 
+bayesplot::mcmc_areas(fit_prior$draws(c("omega")))
+bayesplot::mcmc_areas(fit_prior$draws(c("rho1","L2")))
+bayesplot::mcmc_areas(fit_prior$draws(c("kappa")))
+bayesplot::mcmc_areas(fit_prior$draws(c("tau")))
+```
+
+## Posteriors
+
+```{r include=TRUE}
+bayesplot::mcmc_areas(fit$draws(c("logkwHat","S1mHat","S1aHat"))) 
+bayesplot::mcmc_areas(fit$draws(c("dlogkwHat","dSmHat","dSaHat"))) 
+bayesplot::mcmc_areas(fit$draws(c("S2mHat","S2aHat")))
+bayesplot::mcmc_areas(fit$draws(c("beta")))
+bayesplot::mcmc_areas(fit$draws(c("alphaAHat","alphaBHat")))
+bayesplot::mcmc_areas(fit$draws(c("dlogkTHat","omegadlogkT")))
+bayesplot::mcmc_areas(fit$draws(c("apH"))) 
+bayesplot::mcmc_areas(fit$draws(c("msigma","ssigma"))) 
+bayesplot::mcmc_areas(fit$draws(c("omega")))
+bayesplot::mcmc_areas(fit$draws(c("rho1","L2")))
+bayesplot::mcmc_areas(fit$draws(c("kappa")))
+bayesplot::mcmc_areas(fit$draws(c("tau")))
+```
+
+## Summary of model parameters
+
+```{r}
+fit$print(c("logkwHat","S1mHat","S1aHat", "dlogkwHat", "dSmHat", "dSaHat", "S2mHat", "S2aHat", "beta", "alphaAHat", "alphaBHat","dlogkTHat","omegadlogkT","apH","msigma","ssigma","omega","rho1","L2","kappa","tau"), max_rows=50)
+```
+
+## Extract sample
+
+```{r}
+draws_df <- fit$draws(format = "df")
+```
+
+## Goodness of Fit Plots, GOF
+
+```{r}
+tr_Cond_Mean <- apply(draws_df[,which(colnames(draws_df) %in% grep("trCond", names(draws_df), value = TRUE))], MARGIN = 2, FUN = mean)
+tr_Pred_Mean <- apply(draws_df[,which(colnames(draws_df) %in% grep("trPred", names(draws_df), value = TRUE))], MARGIN = 2, FUN = mean)
+
+plot_popul <- ggplot()+geom_point(aes(tr_Pred_Mean,data$RT),col="red")+
+  labs(x =expression("Population predicted retention time (tR"[z]*")"), y = expression("Observed retention time (tRobs"[z]*")"))+
+  xlim(0,350)+ylim(0,350) + geom_line(aes(seq(0,350,by=0.1),seq(0,350,by=0.1)),size=1)
+
+plot_indiv <- ggplot()+geom_point(aes(tr_Cond_Mean,data$RT),col="red")+
+  labs(x =expression("Individual predicted retention time (tR"[z]*")"), y = expression("Observed retention time (tRobs"[z]*")"))+
+  xlim(0,350)+ylim(0,350) + geom_line(aes(seq(0,350,by=0.1),seq(0,350,by=0.1)),size=1)
+
+plot_resid <- ggplot()+geom_point(aes(data$EXPID,data$RT-tr_Cond_Mean),col="red")+
+  labs(x ="Experiment ID", y = expression("Residuals (tRobs"[z]*" - tR"[z]*")"))+
+  geom_line(aes(seq(0,84,by=0.1),rep(0,841)),size=1)+
+  xlim(0,84)+ylim(-50,50)
+
+grid.arrange(plot_popul, plot_indiv,plot_resid, ncol=1)
+```
+
+## Posterior distribution
+
+```{r}
+parameters <- c("logkwHat","S1mHat","S1aHat","S2mHat","S2aHat","dlogkwHat[1]","dlogkwHat[2]","dSmHat[1]","dSmHat[2]",
+"dSaHat[1]","dSaHat[2]","dlogkTHat","beta[1]","beta[2]","beta[3]","alphaAHat[1]","alphaAHat[2]",
+"alphaBHat[1]","alphaBHat[2]","omega[1]","omega[2]","omega[3]","omegadlogkT","kappa[1]","kappa[2]","kappa[3]",
+"tau[1]","tau[2]","apH[1]","apH[2]","msigma","ssigma")
+
+data_to_plot_par <- draws_df[,which(colnames(draws_df) %in% parameters)]
+
+lab <- c(expression(theta["logkwN"]),
+                                expression(theta["S1mN"]),expression(theta["S1aN"]),
+                                expression(theta["S2m"]),expression(theta["S2a"]),
+                                expression(theta["dlogkwA"]),expression(theta["dlogkwB"]),
+                                expression(theta["dSmA"]),expression(theta["dSmB"]),
+                                expression(theta["dSaA"]),expression(theta["dSaB"]),
+                                expression(theta["dlogkT"]),
+                                expression(beta["logkwN"]),expression(beta["S1mN"]),
+                                expression(beta["S1aN"]),
+                                expression(alpha["mA"]),expression(alpha["aA"]),
+                                expression(alpha["mB"]),expression(alpha["aB"]),
+                                expression(omega["logkwN"]),expression(omega["S1mN"]),
+                                expression(omega["S1aN"]),expression(omega["dlogkT"]),
+                                expression(kappa["logkwN"]),expression(kappa["S1mN"]),
+                                expression(kappa["S1aN"]),
+                                expression(tau["m"]),expression(tau["a"]),
+                                expression(apH["A"]),expression(apH["B"]),
+                                expression(m[sigma]),expression(s[sigma]))
+ 
+
+library(reshape2)
+pp <- melt(data_to_plot_par)
+ggplot(data = pp, aes(x=variable, y=value)) + geom_boxplot(aes(fill=variable))+ coord_flip()+
+  theme(legend.position = "none")+ scale_x_discrete(labels=lab,limits=rev)+
+  labs(y="Marginal posterior distributions",x="")
+```
+
+## Individual Parameters - Neutral Form
+
+```{r}
+param <- apply(draws_df[,which(colnames(draws_df) %in% grep("param", names(draws_df), value = TRUE))], MARGIN = 2, FUN = mean)
+param <- melt(param)
+param1 <- param[1:nAnalytes,]
+param2 <- param[(nAnalytes+1):(2*nAnalytes),]
+param3 <- param[(2*nAnalytes+1):(3*nAnalytes),]
+data_to_plot_param <- cbind(dataACD$logP[which(dataACD$METID %in% data$METID)],param1,param2,param3)
+colnames(data_to_plot_param) <- c(expression('logP'[i]),expression('logkwN'[i]),expression('S1mN'[i]),expression('S1aN'[i]))
+
+ggpairs(as.data.frame(data_to_plot_param), columnLabels = colnames(data_to_plot_param) ,
+        labeller = "label_parsed",upper = list(continuous = "points"))
+```
+
+## Effect of dissociation
+
+```{r}
+dlogkwA <- apply(draws_df[,which(colnames(draws_df) %in% grep("dlogkwA", names(draws_df), value = TRUE)[1:((maxR+1)*nAnalytes)])], MARGIN = 2, FUN = mean)
+dlogkwA <- melt(dlogkwA)[,1]
+
+dlogkwB <- apply(draws_df[,which(colnames(draws_df) %in% grep("dlogkwB", names(draws_df), value = TRUE)[1:((maxR+1)*nAnalytes)])], MARGIN = 2, FUN = mean)
+dlogkwB <- melt(dlogkwB)[,1]
+
+dlogkwN <- (dlogkwA*melt(chargesA)[,2]+dlogkwB*melt(chargesB)[,2])/melt(charges)[,2]
+
+
+dS1mA <- apply(draws_df[,which(colnames(draws_df) %in% grep("dSmA", names(draws_df), value = TRUE)[1:((maxR+1)*nAnalytes)])], MARGIN = 2, FUN = mean)
+dS1mA <- melt(dS1mA)[,1]
+
+dS1mB <- apply(draws_df[,which(colnames(draws_df) %in% grep("dSmB", names(draws_df), value = TRUE)[1:((maxR+1)*nAnalytes)])], MARGIN = 2, FUN = mean)
+dS1mB <- melt(dS1mB)[,1]
+
+dS1m <- (dS1mA*melt(chargesA)[,2]+dS1mB*melt(chargesB)[,2])/melt(charges)[,2]
+
+dS1aA <- apply(draws_df[,which(colnames(draws_df) %in% grep("dSaA", names(draws_df), value = TRUE)[1:((maxR+1)*nAnalytes)])], MARGIN = 2, FUN = mean)
+dS1aA <- melt(dS1aA)[,1]
+
+dS1aB <- apply(draws_df[,which(colnames(draws_df) %in% grep("dSaB", names(draws_df), value = TRUE)[1:((maxR+1)*nAnalytes)])], MARGIN = 2, FUN = mean)
+dS1aB <- melt(dS1aB)[,1]
+
+dS1a <- (dS1aA*melt(chargesA)[,2]+dS1aB*melt(chargesB)[,2])/melt(charges)[,2]
+
+chargesAB <- melt(chargesA-chargesB)[,2]
+chargesAB_n <- ifelse(chargesAB<0,"anions",ifelse(chargesAB>0,"cations",ifelse(chargesAB==0,"zwitterions",NaN)))
+
+data_to_plot_dis <- cbind(dlogkwN,dS1m,dS1a,chargesAB_n)
+data_to_plot_dis <- as.data.frame(data_to_plot_dis[!is.nan(data_to_plot_dis[,1]),])
+data_to_plot_dis[, 1:3] <- sapply(data_to_plot_dis[, 1:3], as.numeric)
+
+ggpairs(data_to_plot_dis,columns = 1:3, columnLabels = c("dlogkw[r.i]","dS1m[r.i]","dS1a[r.i]"), 
+        labeller = "label_parsed",
+        aes(color = chargesAB_n, alpha = 0.5),
+        upper = list(continuous = "points"))
+```
+
+## Sigmas
+
+```{r}
+hist(melt(apply(log(draws_df[,which(colnames(draws_df) %in% grep("sigma", names(draws_df), value = TRUE)[3:(nAnalytes+2)])]),
+                         MARGIN = 2, FUN = mean))[,1],main="",xlab=expression(sigma[i]),probability = TRUE)
+```
+
+## Effect of temperature
+
+```{r}
+hist(melt(apply(draws_df[,which(colnames(draws_df) %in% grep("dlogkT", names(draws_df), value = TRUE)[3:(nAnalytes+2)])],
+                MARGIN = 2, FUN = mean))[,1],main="",xlab=expression("dlogkT"[i]),probability = TRUE)
+```
+
+## Individual predictions based on preliminary data
+
+```{r}
+Mod_2 = rep(rep(c(2,1),each=3*2),9*nAnalytes)
+pHo_1  <- c(2.494082,  2.514011,  2.507084,  2.483992,  #pH=1 - 2.5 
+            3.402085,  3.431361,  3.428675,  3.398003,	#pH=2 - 3.3
+            6.843702,  7.331219,  7.356560,  6.810815,	#pH=6 - 6.8
+            10.502949, 10.195814, 10.190990, 10.517369,  #pH=9 - 10.5
+            4.938005,  4.957298,  4.947208,  4.928445,	#pH=4 - 4.9
+            5.777102,  5.791394,  5.838224,  5.817305,	#pH=5 - 5.8
+            8.875880,  8.568016,  8.580016,  8.890530,  #pH=7 - 8.9
+            9.620316,  9.319468,  9.329717,  9.628639,	#pH=8 - 9.7
+            4.172955,  4.202902,  4.178003,  4.149028)	#pH=3 - 4.1
+
+alpha1_1 <- c(0.57873300, 0.44117918, 0.54090500, 0.42792546, #pH=1
+              0.82783763, 0.73291100, 0.56586591, 0.56910464, #pH=2
+              5.60764807, 4.37780336, 2.76084717, 5.24573418, #pH=6
+              -0.93599336,-1.48119846,-0.83424655,-0.67501446, #pH=9
+              1.58296990, 1.52743172, 0.95662418, 0.95381600, #pH=4
+              1.82029346, 1.87782264, 0.13722716, 0.08902752, #pH=5
+              -0.91137517,-1.11923744,-1.19447681,-0.85834636, #pH=7
+              -0.38487309,-0.49551890,-0.91021527,-0.61291100, #pH=8
+              0.34560244, 0.24743708, 0.56910464, 0.59363500) #pH=3
+
+alpha2_1 <- c(1.74974831, 1.98438471, 1.37875120, 1.54409339, #pH=1
+              1.67822641, 1.78324944, 1.49943237, 1.52847810, #pH=2
+              -4.36394988,-4.14747778,-1.66462461,-3.89936811, #pH=6
+              -0.29501981, 0.60115669,-0.08490950,-0.16084395, #pH=9
+              1.32742851, 1.27379244, 1.46813752, 1.56200064, #pH=4
+              0.42009211, 0.06698083, 2.02037057, 2.27064368, #pH=5
+              -0.43138053,-0.22808182, 0.44239049, 0.04022705, #pH=7
+              -1.05481418,-1.03917747, 0.13854557,-0.18324944, #pH=8
+              2.30183142, 2.37780872, 1.52847810, 1.52625040) #pH=3
+
+nObs2 = 9*3*2*2*nAnalytes
+analyte2=rep(1:nAnalytes,each=9*3*2*2)
+pHid2=rep(rep(c(1,2,6,9,4,5,7,8,3),each=12),nAnalytes)
+pHs_qq=rep(rep(c(2.5,3.3,6.8,10.5,4.9,5.8,8.9,9.7,4.1),each=12),nAnalytes)
+steps2=4*(1-Mod_2) + 10*(Mod_2)
+hplcparam2=cbind(rep(c(30,90,270),by=9*2*2*nAnalytes),rep(2.1,by=9*3*2*2*nAnalytes),rep(0.532,by=9*3*2*2*nAnalytes),
+                 rep(0.04,by=9*3*2*2*nAnalytes),rep(0.05,by=9*3*2*2*nAnalytes),rep(0.8,by=9*3*2*2*nAnalytes),
+                 Mod_2,
+                 rep(rep(pHo_1,each=3),nAnalytes),rep(rep(alpha1_1,each=3),nAnalytes),rep(rep(alpha2_1,each=3),nAnalytes),
+                 (rep(c(25,25,25,35,35,35,35,35,35,25,25,25),9*nAnalytes)-25)/10)
+mod2=Mod_2
+
+stan_rdump(c("nAnalytes", 
+             "nObs", 
+             "npH", 
+             "analyte", 
+             "pHid", 
+             "steps", 
+             "hplcparam",  
+             "mod",
+             "logPobs", 
+             "maxR", 
+             "R", 
+             "pKaslit",  
+             "pKasliterror",
+             "groupsA",
+             "groupsB",
+             "chargesA", 
+             "chargesB",
+             "K",
+             "nrfungroups",
+             "trobs",
+             "nObs2",
+             "analyte2", 
+             "pHid2", 
+             "steps2", 
+             "hplcparam2",  
+             "mod2"),
+           file="stan/model_qq.data.R")
+
+```
+
+```{r eval = FALSE}
+model_qq <- cmdstan_model("stan/hplc-gra-redsum_qsrr_qq.stan")
+fit_qq  <- model_qq$generate_quantities(fit,data = "stan/model_qq.data.R",seed = 123)
+```
+
+```{r}
+#fit_qq$save_object(file = "stan_fit/fit_qq.RDS")
+fit_qq <- readRDS("stan_fit/fit_qq.RDS")
+draws_qq_df <- fit_qq$draws(format = "df")
+```
+
+```{r}
+tr_Cond <- apply(draws_df[,which(colnames(draws_df) %in% grep("trCond", names(draws_df), value = TRUE))], MARGIN = 2, FUN = quantile, probs = c(.025,.5,.975))
+tr_Pred <- apply(draws_df[,which(colnames(draws_df) %in% grep("trPred", names(draws_df), value = TRUE))], MARGIN = 2, FUN = quantile, probs = c(.025,.5,.975))
+df <- cbind(rep("df",nrow(data)),data$METID,as.data.frame(t(tr_Cond)),as.data.frame(t(tr_Pred)),data$RT,data$pHs,data$tg,data$Temp,data$Mod2)
+colnames(df) <- c("dataset","METID","trCond_Low","trCond_Median","trCond_High","trPred_Low","trPred_Median","trPred_High","RT","pHs","tg","Temp","Mod")
+
+tr_qq_Cond <- apply(draws_qq_df[,which(colnames(draws_qq_df) %in% grep("trCond", names(draws_qq_df), value = TRUE))], MARGIN = 2, FUN = quantile, probs = c(.025,.5,.975))
+tr_qq_Pred <- apply(draws_qq_df[,which(colnames(draws_qq_df) %in% grep("trPred", names(draws_qq_df), value = TRUE))], MARGIN = 2, FUN = quantile, probs = c(.025,.5,.975))
+df_qq <- cbind(rep("df_qq",3*9*2*2*nAnalytes),rep(unique(data$METID),each=12*9),
+               as.data.frame(t(tr_qq_Cond)),as.data.frame(t(tr_qq_Pred)),
+               rep(NA,by=3*9*2*2*nAnalytes),
+               pHs_qq,rep(c(30,90,270),by=9*2*2*nAnalytes),
+               rep(c(25,25,25,35,35,35,35,35,35,25,25,25),9*nAnalytes),mod2)
+colnames(df_qq) <- c("dataset","METID","trCond_Low","trCond_Median","trCond_High","trPred_Low","trPred_Median","trPred_High","RT","pHs","tg","Temp","Mod")
+
+df_all <- rbind(df,df_qq)
+
+for(i in 1:length(analyte_ID_sample)){
+df_all1 <- df_all[which(df_all$METID %in% analyte_ID_sample[i]),]
+
+p <- ggplot(df_all1)+
+  geom_point(data=df_all1[which(df_all1$dataset=="df"),],aes(x = pHs, y = RT, color = as.factor(tg)))+ 
+  geom_line(data=df_all1[which(df_all1$dataset=="df_qq"),],aes(x = pHs,  y = trCond_Median, color = as.factor(tg)))+
+  geom_ribbon(data=df_all1[which(df_all1$dataset=="df_qq"),],aes(x = pHs, ymin = trCond_Low, ymax = trCond_High, color = as.factor(tg)), alpha = 0.25)+
+ facet_grid(Temp~Mod,labeller = labeller(Temp=temp.labs,Mod=mod.labs))+
+ labs(title=paste(dataNames$Name[analyte_ID_sample[i]]), x ="pH", y = "Retention time", color = "Gradient time")
+print(p)
+}
+
+for(i in 1:length(analyte_ID_sample)){
+df_all1 <- df_all[which(df_all$METID %in% analyte_ID_sample[i]),]
+
+p <- ggplot(df_all1)+
+  geom_point(data=df_all1[which(df_all1$dataset=="df"),],aes(x = pHs, y = RT, color = as.factor(tg)))+ 
+  geom_line(data=df_all1[which(df_all1$dataset=="df_qq"),],aes(x = pHs,  y = trPred_Median, color = as.factor(tg)))+
+  geom_ribbon(data=df_all1[which(df_all1$dataset=="df_qq"),],aes(x = pHs, ymin = trPred_Low, ymax = trPred_High, color = as.factor(tg)), alpha = 0.25)+
+ facet_grid(Temp~Mod,labeller = labeller(Temp=temp.labs,Mod=mod.labs))+
+ labs(title=paste(dataNames$Name[analyte_ID_sample[i]]), x ="pH", y = "Retention time", color = "Gradient time")
+print(p)
+}
+```
+
+## Limited data predictions
+
+```{r}
+metidx = c(8, 9, 17, 33, 58, 180)
+expidx = c(10, 58, 38)
+#hplcparam_sim((ismember(hplcparam_sim.expid,expidx)),:)
+#idx = find(ismember(unique(data.METID),metidx));
+
+# Predictions based on selected measurments
+data_red <- data[which(data$METID %in% metidx & data$EXPID %in% expidx),]
+
+nObs = length(data_red$METID)
+nAnalytes = length(unique(data_red$METID))
+npH = length(unique(data_red$pH))
+analyte=match(data_red$METID, unique(data_red$METID))
+pHid=match(data_red$pH, unique(data_red$pH))
+steps=4*(1-data_red$Mod2) + 10*(data_red$Mod2)
+hplcparam=cbind(data_red$tg,data_red$td,data_red$to,
+                data_red$te,data_red$fio,data_red$fik,
+                data_red$Mod2+1,data_red$pHo,
+                data_red$alpha1,data_red$alpha2,
+                (data_red$Temp-25)/10)
+mod=data_red$Mod2+1
+R=R[which(unique(data$METID) %in% metidx)]
+pKaslit=pKaslit[which(unique(data$METID) %in% metidx),]
+pKasliterror=pKasliterror[which(unique(data$METID) %in% metidx),]
+groupsA=groupsA[which(unique(data$METID) %in% metidx),] 
+groupsB=groupsB[which(unique(data$METID) %in% metidx),] 
+chargesA=chargesA[which(unique(data$METID) %in% metidx),]
+chargesB=chargesB[which(unique(data$METID) %in% metidx),]
+
+trobs=data_red$RT
+K=ncol(functional_groups)
+nrfungroups=nrfungroups[which(unique(data$METID) %in% metidx),]
+
+# Functional group effects
+pilogkw = matrix(c(0.0889968428595548, 0.177471413490907,0.220089668251250, 0.105968524228844,-0.0771815195591502, 0.160325195284994,
+            -0.0581799102143500, 0.185308852260919,-0.0201489460052250, 0.179988182045063,0.0307316725699825, 0.188612904909725,
+            0.0543621082853000, 0.120183861760715,0.0324279323432999, 0.182588420787220,-0.0559667868367500, 0.171610973282035,
+            -0.0415813552520000, 0.127933551854748,-0.0180587034066250, 0.180318487129278,-0.233834863103000, 0.119557887197776,
+            0.180337220964750, 0.0846757399085927,0.222922921009750, 0.108777856957033,-0.000501192305000001, 0.131647570428321,
+            0.0498735976307500, 0.146940875915100,0.0513917052316499, 0.132389150840822,0.287699338262500, 0.111017971807696,
+            0.124327135344325, 0.0609063261016972,0.125937048681750, 0.173498858874232,-0.0935018665000727, 0.119702270923968,
+            0.110744323446425, 0.155684606307299,0.0988604463651751, 0.154538855196298,0.0143156623489500, 0.102276959128834,
+            0.172177835703000, 0.132273861408408,-0.0643482931813277, 0.149964201815220,-0.0329482021954501, 0.151168437643277,
+            0.423955068749999, 0.0885875918043772,0.0993908985895301, 0.114247980097966,0.0298201324193250, 0.182464612224784,
+            0.262131928062750, 0.162515143173171,0.125264699990745, 0.139539749944581,0.108892420331975, 0.106826055058630,
+            0.0343301783096001, 0.0934536247436581,0.143383295807107, 0.151605033204463,-0.101369205041500, 0.147919735532570,
+            -0.0913377286217774, 0.104111219920434,0.114594420303100, 0.100462396653018,0.137289133807375, 0.172043654639451,
+            -0.159722669718600, 0.165543368574018,-0.100180180674275, 0.123600934733901,-0.172452433209500, 0.143307896625322,
+            -0.151108470096749, 0.161005113067004,-0.0716024258115749, 0.147898507889060,-0.410842843382499, 0.140738135836306,
+            0.000433213414249995, 0.175875588073256,0.0476187438239748, 0.0922153601330513,0.00506268302377501, 0.182678051432591,
+            0.0826298697423501, 0.167920419044898,-0.00806687702650001, 0.182219831488352,0.0879922134395501, 0.181998003635673,
+            0.160473326353290, 0.166060658904532,-0.00545335401175000, 0.180062747952312,0.0491115158007500, 0.148776460100283,
+            -0.0790377194335501, 0.152635415304690,0.0804110515920003, 0.186671844754081,0.0556822471320525, 0.132266474042620,
+            0.100240845222148, 0.109456712990130,-0.0393841636146501, 0.187559603506411,0.0723208501620699, 0.182642665955130),60,2,byrow=TRUE)
+piS1m=matrix(c(0.0217000559264250, 0.154957706487726,0.106134236236000, 0.103414295235257,0.0778085607394998, 0.145230648283856,
+               0.0655436159672500, 0.159787278072099,0.00522921446779999, 0.160644821033471,-0.00690202034879999, 0.169823560721250,
+               0.208429806273775, 0.116246517233544,-0.0118745781861125, 0.159477133102472,0.100122203701200, 0.154500566094926,
+               0.0644238794738526, 0.120777670402343,0.0397175303883750, 0.156209567867953,-0.00329354588375000, 0.124583226054949,
+               0.197713133829750, 0.0897640046925205,0.0623477881566750, 0.108635663842868,-0.00735698785372498, 0.133018819334084,
+               0.0655856143230000, 0.135373389640694,-0.0676902528240000, 0.127087050009747,0.147878240230000, 0.110581200578122,
+               0.244202023450001, 0.0675280219418342,-0.0442913221941248, 0.150922383973941,0.173501527884500, 0.113705291932268,
+               -0.0365348548789000, 0.138043420187343,-0.105239627925450, 0.145407961486631,0.0317578123057000, 0.101285112390947,
+               -0.00892374372052501, 0.119905477353245,0.0149970674375000, 0.135600616114253,-0.0448266668852501, 0.130958829322927,
+               0.301479356809751,0.0906550705894951,0.0594514271803000, 0.112569001623926,0.0431497501975751, 0.168617953959701,
+               0.0485574303400775, 0.140023445586041,0.0769855942661501, 0.128243679718009,0.145813218572550, 0.107365014749321,
+               0.0279250855683500, 0.0932651788037824,0.0303524569695750, 0.129411974521634,0.178533757770950, 0.139406109232078,
+               -0.0842705905559500, 0.104531826953638,0.154872312716500, 0.0996907059774276,0.132141557586992, 0.152110361897885,
+               -0.0405228301690000, 0.157263720169405,-0.140858090681658, 0.118152826876805,0.156149595732875, 0.133036941759429,
+               0.134440491507875, 0.138817968012840,0.139985368892750, 0.133760811454953,-0.201352129304250, 0.130151112570089,
+               0.103264498479375, 0.158431454882315,0.176517505312900, 0.107967439587904,-0.142850163107775, 0.176517622964707,
+               0.0640129549986750, 0.150302065640594,0.0308196197489499, 0.163472973013075,0.0309345101660500, 0.154618187499486,
+               0.0439905966312500, 0.141494845812313,0.0335519910824000, 0.160873678513828,-0.0415121552322499, 0.129682894598821,
+               0.0865000891908250, 0.135453887389572,-0.0418402961457725, 0.162897804074594,0.107768039835750, 0.128110626150208,
+               0.144802405712934, 0.113721157394385,0.193430843130750, 0.169572416239922,0.0939918425327248, 0.162166456557561),60,2,byrow=TRUE)
+piS1a =matrix(c(0.0698588119030001, 0.266997955870408,-0.0144656829931750, 0.148733155306423,-0.0732117244065000, 0.227686995189610,
+                -0.161391291165675, 0.275901409852163,0.0338917363063001, 0.271877410824601,-0.0126832724365000, 0.298346663477855,
+                0.0203286872035000, 0.177806814002461,0.111895183797900, 0.271521660214816,-0.0993323177924252, 0.241436538993382,
+                0.0941978176669001, 0.180301450303532,-0.0231392560610000, 0.274114484568687,0.462180803630000, 0.188957918025456,
+                0.596185300750001, 0.126331207619497,0.0747870440726349, 0.160085514634547,0.215890568380500, 0.201692251523540,
+                0.0111592813609250, 0.214000122466492,-0.174233959451578, 0.189218817192267,0.301355481089251, 0.159306379551736,
+                0.370040966425000, 0.0916786440894036,0.0844944851305248, 0.246941048748585,0.216316038603325, 0.168665961619620,
+                0.0142375086965000, 0.218564066263434,0.0210094238269000, 0.223810574360652,-0.112519956732200, 0.140485010893325,
+                0.147743851832600, 0.182825344199810,0.301887597099050, 0.213382465113893,0.0615851100933250, 0.203977937016960,
+                0.350459336138750, 0.127671681824427,0.196511031060970, 0.162785467231247,-0.207562572348100, 0.319149603000405,
+                -0.240331138083249, 0.215819497157118,-0.710979029074999, 0.204438130939904,0.0522476095115002, 0.153576361682664,
+                0.0590822581768752, 0.134308875041780,-0.196431292645900, 0.195638042452994,-0.100291397251750, 0.204207737155929,
+                -0.197336832944275, 0.145253622132466,0.144002680948375, 0.145300767608426,-0.0980488794257999, 0.264017658442989,
+                0.474931054038000, 0.248261603630060,-0.0508391006226000, 0.172241816537243,0.564059040740000, 0.210695763630808,
+                0.0679908603261500, 0.226609867181402,-0.351798112383883, 0.206893336516015,0.142693050118950, 0.187933820047448,
+                -0.247756557571000, 0.262197661810480,0.538594641175001, 0.145058363009612,0.589749770952500, 0.303034971268726,
+                -0.0625016822134999, 0.255047107307086,0.0519043844712500, 0.283839486679962,-0.116257019861325, 0.274911738051457,
+                0.0535596520790248, 0.222526855386509,0.0484423938490250, 0.291964169639225,0.170557791367350, 0.200459681659015,
+                -0.230579356470800, 0.217900375881488,0.0139409652806000, 0.267260001573277,-0.106784199815388, 0.193770940997105,
+                -0.566092862437250, 0.157219504776589,-0.400852275487326, 0.285199083543308,-0.112792394288325, 0.274935172540649),60,2,byrow=TRUE)
+
+mpilogkw=pilogkw[,1]
+spilogkw=pilogkw[,2]
+mpiS1m=piS1m[,1]
+spiS1m=piS1m[,2]
+mpiS1a=piS1a[,1]
+spiS1a=piS1a[,2]
+
+logPobs=logP[which(unique(data$METID) %in% metidx)]
+```
+
+```{r,message=FALSE,warning=FALSE}
+datastruct_small = with(data_red,
+                  list(nAnalytes=nAnalytes,
+                       nObs=nObs,
+                       npH=npH,
+                       analyte=analyte,
+                       pHid=pHid,
+                       steps=steps,
+                       hplcparam=hplcparam,
+                       mod=mod,
+                       logPobs=logPobs, 
+                       maxR=maxR,
+                       R=R,
+                       pKaslit=pKaslit,
+                       pKasliterror=pKasliterror,
+                       groupsA=groupsA, 
+                       groupsB=groupsB, 
+                       chargesA=chargesA,
+                       chargesB=chargesB,
+                       mpilogkw=mpilogkw,
+                       spilogkw=spilogkw,
+                       mpiS1m=mpiS1m,
+                       spiS1m=spiS1m,
+                       mpiS1a=mpiS1a,
+                       spiS1a=spiS1a,
+                       trobs=trobs,
+                       K=K,
+                       nrfungroups=nrfungroups))
+
+init <- function(){
+  list( logkwHat  =  rnorm(1,3.1543,0.0871),
+        S1mHat     = rnorm(1,4.5141,0.0971),
+        S1aHat     = rnorm(1,5.5600,0.1348),
+        dlogkwHat = rnorm(2,c(-0.7357,-0.9359),c(0.0588,0.0461)),
+        dSmHat   = rnorm(2,c(0.3311,0.1098),c(0.1030,0.0704)),
+        dSaHat   = rnorm(2,c(0.8910,-0.4577),c(0.1057,0.0670)),
+        S2mHat    = rnorm(1,0.3741,0.0250), 
+        S2aHat    = rnorm(1,0.8194,0.0342),
+        beta  = rnorm(3,c(0.7442,0.3553,0.3895),c(0.0313,0.0393,0.0513)),
+        alphaAHat = rnorm(2,c(1.9736,2.1454),c(0.1703,0.1844)),
+        alphaBHat = rnorm(2, c(-1.0005,-0.8940),c(0.1405,0.1641)),
+        dlogkTHat  = rnorm(1,-0.0946,0.0026),
+        omegadlogkT  = rnorm(1,0.0344,0.0021),
+        apH  = rnorm(2,c(-0.0238,0.0851),c(0.0010, 0.0009)),
+        sigma   = ifelse(rlnorm(nAnalytes,log(0.3671),1)>4,3.9,rlnorm(nAnalytes,log(0.3671),1)),
+        msigma  = rnorm(1,0.3671, 0.0278),
+        ssigma  = rnorm(1,0.9989,0.0536),
+        omega = c(0.6150,0.6762,0.9206)*exp(rnorm(3,c(0.0393,0.0469,0.0631), 0.5)),
+        rho1 = matrix(c(1, 0.7811, 0.7135, 
+                 0.7811, 1, 0.9148, 
+                 0.7135,  0.9148, 1),3,3,byrow=TRUE),
+        L2 = matrix(c(1, 0,
+               0.9408, 0.3355),2,2,byrow=TRUE),
+        kappa = c(0.5305,0.5526,0.5409)* exp(rnorm(3,c(0.0276,0.0447,0.0422), 0.2)),
+        tau   = c(2.2561,2.5580)*exp(rnorm(2,c(0.1644,0.1841), 0.2)),
+        pilogkw = rnorm(K,pilogkw[,1],pilogkw[,2]),
+        piS1m = rnorm(K,piS1m[,1],piS1m[,2]),
+        piS1a = rnorm(K,piS1a[,1],piS1a[,2]),
+        sdpi = c(0.1964,0.1736,0.3162)* exp(rnorm(3,c(0.0301,0.0288,0.0387), 0.1)),
+        param =  c(2+0.75*logPobs, 4*matrix(1,nAnalytes,1)+0.3*logPobs,
+                   5*matrix(1,nAnalytes,1)+0.3*logPobs), 
+        dlogkwA =  -0.7357*matrix(1,nAnalytes,maxR+1), 
+        dlogkwB = -0.9359*matrix(1,nAnalytes,maxR+1), 
+        dSmA = 0.3311*matrix(1,nAnalytes,maxR+1), 
+        dSmB = 0.1098*matrix(1,nAnalytes,maxR+1), 
+        dSaA = 0.8910*matrix(1,nAnalytes,maxR+1), 
+        dSaB = -0.4577*matrix(1,nAnalytes,maxR+1), 
+        dlogkT = rnorm(nAnalytes,-0.0946,0.0217),
+        pKaw = pKaslit,
+        etaStd1 =matrix(0,2,nAnalytes),
+        etaStd2 =matrix(0,2,nAnalytes)
+  )
+}
+
+mod1 <- cmdstan_model("stan/hplc-gra-redsum_qsrr_fixed.stan")
+
+fit <- mod1$sample(
+  data = datastruct_small, 
+  init = init,
+  output_dir = "tmpstan",
+  seed = 123, 
+  iter_warmup = 1000,
+  iter_sampling = 1000,
+  chains = 4,
+  parallel_chains = 4,
+  refresh = 500
+)
+
+#fit$summary()
+#fit$cmdstan_summary()
+#fit$cmdstan_diagnose()
+#fit$save_object(file = "fit.RDS")
+#fit$output_files()
+```
+
+```{r}
+Mod_2 = rep(rep(c(2,1),each=3*2),9*nAnalytes)
+nObs2 = 9*3*2*2*nAnalytes
+analyte2=rep(1:nAnalytes,each=9*3*2*2)
+pHid2=rep(rep(c(1,2,6,9,4,5,7,8,3),each=12),nAnalytes)
+pHs_qq=rep(rep(c(2.5,3.3,6.8,10.5,4.9,5.8,8.9,9.7,4.1),each=12),nAnalytes)
+steps2=4*(1-Mod_2) + 10*(Mod_2)
+hplcparam2=cbind(rep(c(30,90,270),by=9*2*2*nAnalytes),rep(2.1,by=9*3*2*2*nAnalytes),rep(0.532,by=9*3*2*2*nAnalytes),
+                 rep(0.04,by=9*3*2*2*nAnalytes),rep(0.05,by=9*3*2*2*nAnalytes),rep(0.8,by=9*3*2*2*nAnalytes),
+                 Mod_2,
+                 rep(rep(pHo_1,each=3),nAnalytes),rep(rep(alpha1_1,each=3),nAnalytes),rep(rep(alpha2_1,each=3),nAnalytes),
+                 (rep(c(25,25,25,35,35,35,35,35,35,25,25,25),9*nAnalytes)-25)/10)
+mod2=Mod_2
+
+stan_rdump(c("nAnalytes", 
+             "nObs", 
+             "npH", 
+             "analyte", 
+             "pHid", 
+             "steps", 
+             "hplcparam",  
+             "mod",
+             "logPobs", 
+             "maxR", 
+             "R", 
+             "pKaslit",  
+             "pKasliterror",
+             "groupsA",
+             "groupsB",
+             "chargesA", 
+             "chargesB",
+             "K",
+             "nrfungroups",
+             "mpilogkw",
+             "spilogkw",
+             "mpiS1m",
+             "spiS1m",
+             "mpiS1a",
+             "spiS1a",
+             "trobs",
+             "nObs2",
+             "analyte2", 
+             "pHid2", 
+             "steps2", 
+             "hplcparam2",  
+             "mod2"),
+           file="stan/model_fixed_qq.data.R")
+
+
+model_qq <- cmdstan_model("stan/hplc-gra-redsum_qsrr_fixed_qq.stan")
+fit_qq  <- model_qq$generate_quantities(fit,data = "stan/model_fixed_qq.data.R",
+                                        seed = 123)
+
+#fit_qq$save_object(file = "stan/fit_qq.RDS")
+#fit_qq <- readRDS("stan/fit_qq.RDS")
+```
+
+```{r}
+draws_qq_df11 <- fit_qq$draws(format = "df")
+draws_df11 <- fit$draws(format = "df")
+
+tr_Cond <- apply(draws_df11[,which(colnames(draws_df11) %in% grep("trCond", names(draws_df11), value = TRUE))], MARGIN = 2, FUN = quantile, probs = c(.025,.5,.975))
+tr_Pred <- apply(draws_df11[,which(colnames(draws_df11) %in% grep("trPred", names(draws_df11), value = TRUE))], MARGIN = 2, FUN = quantile, probs = c(.025,.5,.975))
+df11 <- cbind(rep("df11",nrow(data_red)),data_red$METID,as.data.frame(t(tr_Cond)),as.data.frame(t(tr_Pred)),data_red$RT,data_red$pHs,data_red$tg,data_red$Temp,data_red$Mod2)
+colnames(df11) <- c("dataset","METID","trCond_Low","trCond_Median","trCond_High","trPred_Low","trPred_Median","trPred_High","RT","pHs","tg","Temp","Mod")
+
+tr_qq_Cond <- apply(draws_qq_df11[,which(colnames(draws_qq_df11) %in% grep("trCond", names(draws_qq_df11), value = TRUE))], MARGIN = 2, FUN = quantile, probs = c(.025,.5,.975))
+tr_qq_Pred <- apply(draws_qq_df11[,which(colnames(draws_qq_df11) %in% grep("trPred", names(draws_qq_df11), value = TRUE))], MARGIN = 2, FUN = quantile, probs = c(.025,.5,.975))
+df_qq11 <- cbind(rep("df_qq11",3*9*2*2*nAnalytes),rep(unique(data_red$METID),each=12*9),
+               as.data.frame(t(tr_qq_Cond)),as.data.frame(t(tr_qq_Pred)),
+               rep(NA,by=3*9*2*2*nAnalytes),
+               pHs_qq,rep(c(30,90,270),by=9*2*2*nAnalytes),
+               rep(c(25,25,25,35,35,35,35,35,35,25,25,25),9*nAnalytes),mod2)
+colnames(df_qq11) <- c("dataset","METID","trCond_Low","trCond_Median","trCond_High","trPred_Low","trPred_Median","trPred_High","RT","pHs","tg","Temp","Mod")
+
+
+df_all11 <- rbind(df11,df_qq11)
+
+for(i in 1:length(analyte_ID_sample)){
+df_all1 <- df_all11[which(df_all11$METID %in% analyte_ID_sample[i]),]
+
+p <- ggplot(df_all1)+
+  geom_point(data=df_all1[which(df_all1$dataset=="df11"),],aes(x = pHs, y = RT, color = as.factor(tg)))+ 
+  geom_line(data=df_all1[which(df_all1$dataset=="df_qq11"),],aes(x = pHs,  y = trCond_Median, color = as.factor(tg)))+
+  geom_ribbon(data=df_all1[which(df_all1$dataset=="df_qq11"),],aes(x = pHs, ymin = trCond_Low, ymax = trCond_High, color = as.factor(tg)), alpha = 0.25)+
+ facet_grid(Temp~Mod,labeller = labeller(Temp=temp.labs,Mod=mod.labs))+
+ labs(title=paste(dataNames$Name[analyte_ID_sample[i]]), x ="pH", y = "Retention time", color = "Gradient time")
+print(p)
+}
+```
+
+## Uncertainty chromatograms
+
+```{r}
+idx <- which(data$EXPID==47 & (data$METID %in% analyte_ID_sample))
+data_to_plot <- draws_df[,which(colnames(draws_df) %in% paste0("trPred[",idx,"]"))]
+colnames(data_to_plot) <- paste(dataNames$Name[analyte_ID_sample])
+
+wp <- melt(data_to_plot)
+p <- ggplot(aes(x=value, colour=variable), data=wp)
+p + geom_density() + xlim(c(0,35))
+```
+
+
+# References
